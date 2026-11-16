@@ -14,7 +14,7 @@ This project delivers a command-line interface (CLI) tool designed to assist sma
 
 Tick these off as you go, and commit after each one.
 
-- [ ] **1. Collect a small corpus of product descriptions for a specific category.**  
+- [x] **1. Collect a small corpus of product descriptions for a specific category.**  
       Hint: Focus on data collection and initial text cleaning.
 - [ ] **2. Implement the byte-pair tokenizer and generate embeddings for product text.**  
       Hint: Implement byte-pair encoding and create an embedding layer.
