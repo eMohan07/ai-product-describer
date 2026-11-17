@@ -5,7 +5,7 @@ They start skipped. Remove the `skip` line as you work on each milestone.
 import pytest
 import re
 from app.core import (
-    milestone_1, milestone_2, milestone_3, milestone_4, milestone_5,
+    milestone_1, milestone_2, milestone_3, milestone_4, milestone_5, milestone_6,
     clean_text, BPETokenizer, GPTEmbedding,
     CausalSelfAttention, TransformerBlock, TransformerStack,
     ProductGPT, prepare_training_data, train_gpt_model,
@@ -423,6 +423,57 @@ def test_cli_generate(capsys, monkeypatch, tmp_path):
 
 
 # Milestone 6: Develop a CLI for users to input product details and receive generated descriptions.
-@pytest.mark.skip(reason="remove this line when you start milestone 6")
-def test_milestone_6():
-    raise NotImplementedError("write the test for milestone 6")
+def test_milestone_6(tmp_path):
+    store_file = str(tmp_path / "test_store_m6.json")
+    out_file = str(tmp_path / "generated_briefcase.txt")
+
+    result = milestone_6(
+        product_name="Heritage Leather Briefcase",
+        category="Handcrafted Leather Goods",
+        features="vegetable-tanned leather, brass hardware",
+        tone="heritage",
+        max_tokens=25,
+        temperature=0.8,
+        top_k=40,
+        data_path=store_file,
+        output_file=out_file,
+    )
+
+    # 1. Output structure check
+    assert result["product_name"] == "Heritage Leather Briefcase"
+    assert result["category"] == "Handcrafted Leather Goods"
+    assert "vegetable-tanned leather" in result["features"]
+    assert len(result["description"]) > 20
+    assert "Heritage Leather Briefcase" in result["description"]
+
+    # 2. File export verification
+    assert os.path.exists(out_file)
+    with open(out_file, "r", encoding="utf-8") as f:
+        file_content = f.read()
+    assert file_content == result["description"]
+
+    # 3. Store persistence verification
+    store = Store(store_file)
+    catalog = store.get("catalog")
+    assert catalog is not None
+    assert len(catalog) == 1
+    assert catalog[0]["name"] == "Heritage Leather Briefcase"
+
+
+def test_cli_describe(capsys, monkeypatch, tmp_path):
+    from app.cli import main
+    monkeypatch.setenv("DATA_PATH", str(tmp_path / "cli_m6.json"))
+    out_file = str(tmp_path / "cli_desc.txt")
+    main([
+        "describe",
+        "--name", "Classic Leather Backpack",
+        "--features", "full-grain cowhide, brass zippers",
+        "--save-to", out_file,
+        "--max-tokens", "20",
+    ])
+    captured = capsys.readouterr().out
+    assert "AI Product Describer" in captured
+    assert "Product Name: Classic Leather Backpack" in captured
+    assert "GENERATED DESCRIPTION: CLASSIC LEATHER BACKPACK" in captured
+    assert os.path.exists(out_file)
+

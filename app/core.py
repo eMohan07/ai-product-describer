@@ -1188,5 +1188,95 @@ def milestone_5(
 
 # --- Milestone 6: Develop a CLI for users to input product details and receive generated descriptions.
 # Hint: Use a library like `argparse` to build the command-line interface.
-def milestone_6():  # TODO(milestone 6)
-    raise NotImplementedError("TODO(milestone 6)")
+
+def milestone_6(
+    product_name: str = "Artisan Messenger Bag",
+    category: str = "Handcrafted Leather Goods",
+    features: str = "full-grain leather, solid brass hardware",
+    tone: str | None = "heritage",
+    max_tokens: int = 50,
+    temperature: float = 0.8,
+    top_k: int = 40,
+    data_path: str | None = None,
+    output_file: str | None = None,
+) -> dict:
+    """Executes Milestone 6:
+    Takes user input product details (name, category, features, tone), constructs an informative
+    conditioning prompt, runs the trained custom GPT model with sampling, and formats the output
+    description for the user. Optionally saves the generated description to a file and Store.
+    """
+    store = Store(data_path)
+    weights_path = Path(data_path).parent / "product_gpt.pt" if data_path else Path("data/product_gpt.pt")
+
+    tokenizer = BPETokenizer(vocab_size=350)
+    corpus = store.get("corpus")
+    if not corpus:
+        m1 = milestone_1(data_path=data_path)
+        corpus = m1["corpus"]
+
+    all_texts = [item["cleaned_description"] for item in corpus]
+    tokenizer.train(all_texts)
+
+    model = ProductGPT(
+        vocab_size=tokenizer.vocab_size,
+        embed_dim=64,
+        num_heads=4,
+        num_layers=2,
+        max_seq_len=256,
+        dropout=0.0,
+    )
+
+    if weights_path.exists():
+        checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        m4 = milestone_4(epochs=5, data_path=data_path, save_weights=True)
+        model = m4["model"]
+
+    model.eval()
+
+    # Synthesize conditioning prompt from product details
+    clean_name = product_name.strip()
+    if features:
+        prompt = f"The {clean_name} is crafted from {features.strip()}"
+    else:
+        prompt = f"The {clean_name} is handcrafted"
+
+    description = generate_product_description(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_tokens,
+        temperature=temperature,
+        top_k=top_k,
+    )
+
+    # Save to file if specified
+    saved_path = None
+    if output_file:
+        out_p = Path(output_file)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(description, encoding="utf-8")
+        saved_path = str(out_p)
+
+    # Update store catalog
+    catalog = store.get("catalog", [])
+    catalog.append({
+        "name": clean_name,
+        "category": category,
+        "features": features,
+        "tone": tone,
+        "description": description,
+    })
+    store.put("catalog", catalog)
+
+    return {
+        "product_name": clean_name,
+        "category": category,
+        "features": features,
+        "tone": tone,
+        "prompt": prompt,
+        "description": description,
+        "saved_to_file": saved_path,
+        "model_used": "ProductGPT (Custom Trained)",
+    }

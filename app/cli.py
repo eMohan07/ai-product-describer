@@ -1,6 +1,6 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, milestone_2, milestone_3, milestone_4, milestone_5
+from app.core import milestone_1, milestone_2, milestone_3, milestone_4, milestone_5, milestone_6
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -39,6 +39,17 @@ def main(argv: list[str] | None = None) -> None:
     gen_parser.add_argument("--max-tokens", type=int, default=40, help="maximum tokens to generate")
     gen_parser.add_argument("--temperature", type=float, default=0.8, help="sampling temperature")
     gen_parser.add_argument("--top-k", type=int, default=40, help="top-k sampling cutoff")
+
+    # Milestone 6: Product Details to Description CLI
+    desc_parser = sub.add_parser("describe", help="input product details to generate a creative description (milestone 6)")
+    desc_parser.add_argument("--name", required=True, help="name of the product (e.g. 'Artisan Messenger Bag')")
+    desc_parser.add_argument("--category", default="Handcrafted Leather Goods", help="product category")
+    desc_parser.add_argument("--features", default="full-grain leather, solid brass hardware", help="comma-separated key features or materials")
+    desc_parser.add_argument("--tone", choices=["heritage", "modern", "luxury", "minimalist"], default="heritage", help="desired description tone")
+    desc_parser.add_argument("--max-tokens", type=int, default=50, help="maximum tokens to generate")
+    desc_parser.add_argument("--temperature", type=float, default=0.8, help="sampling temperature (0.0=greedy, 1.0=creative)")
+    desc_parser.add_argument("--top-k", type=int, default=40, help="top-k sampling cutoff")
+    desc_parser.add_argument("--save-to", help="optional file path to save the generated description")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -106,6 +117,30 @@ def main(argv: list[str] | None = None) -> None:
         print(result["generated_description"])
         print("\n--- Greedy Decoding Sample ---")
         print(result["samples"]["greedy"])
+    elif args.command == "describe":
+        print(f"=== AI Product Describer ===")
+        print(f"Product Name: {args.name}")
+        print(f"Category:     {args.category}")
+        print(f"Features:     {args.features}")
+        print(f"Tone:         {args.tone}")
+        print("Generating creative product description with custom GPT...")
+        result = milestone_6(
+            product_name=args.name,
+            category=args.category,
+            features=args.features,
+            tone=args.tone,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            output_file=args.save_to,
+        )
+        print("\n" + "=" * 55)
+        print(f"GENERATED DESCRIPTION: {args.name.upper()}")
+        print("=" * 55)
+        print(result["description"])
+        print("=" * 55)
+        if result["saved_to_file"]:
+            print(f"Saved description to: {result['saved_to_file']}")
 
 
 if __name__ == "__main__":
