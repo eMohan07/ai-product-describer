@@ -1,7 +1,10 @@
 """Your code. One stub per milestone; build them in order and keep each one small."""
 import html
+import math
 import re
 import unicodedata
+import torch
+import torch.nn as nn
 from app.storage import Store
 
 # Raw dataset of product descriptions with real-world noise (HTML tags, entities, boilerplate, extra whitespace).
@@ -342,8 +345,233 @@ def milestone_1(category: str = "Handcrafted Leather Goods", data_path: str | No
 
 # --- Milestone 2: Implement the byte-pair tokenizer and generate embeddings for product text.
 # Hint: Implement byte-pair encoding and create an embedding layer.
-def milestone_2():  # TODO(milestone 2)
-    raise NotImplementedError("TODO(milestone 2)")
+
+class BPETokenizer:
+    """Byte-Pair Encoding (BPE) Tokenizer built from scratch.
+    - Base vocabulary: all 256 individual bytes (0-255) + special token <|endoftext|> (256)
+    - Learns frequent byte-pair merges iteratively from training texts.
+    - Guarantees lossless round-trip encoding and decoding for any UTF-8 string without UNK tokens.
+    """
+    SPECIAL_TOKENS = {
+        "<|endoftext|>": 256,
+    }
+
+    def __init__(self, vocab_size: int = 350):
+        self.target_vocab_size = vocab_size
+        self.merges: dict[tuple[int, int], int] = {}
+        self.vocab: dict[int, bytes] = {}
+        self.special_tokens = dict(self.SPECIAL_TOKENS)
+        self.inv_special_tokens = {v: k for k, v in self.special_tokens.items()}
+        self._reset_base_vocab()
+
+    def _reset_base_vocab(self):
+        self.vocab = {i: bytes([i]) for i in range(256)}
+        for name, token_id in self.special_tokens.items():
+            self.vocab[token_id] = name.encode("utf-8")
+        self.merges = {}
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self.vocab)
+
+    @staticmethod
+    def _get_stats(token_ids: list[int]) -> dict[tuple[int, int], int]:
+        counts = {}
+        for p in zip(token_ids, token_ids[1:]):
+            counts[p] = counts.get(p, 0) + 1
+        return counts
+
+    @staticmethod
+    def _merge_tokens(token_ids: list[int], pair: tuple[int, int], new_id: int) -> list[int]:
+        new_ids = []
+        i = 0
+        p0, p1 = pair
+        while i < len(token_ids):
+            if i < len(token_ids) - 1 and token_ids[i] == p0 and token_ids[i + 1] == p1:
+                new_ids.append(new_id)
+                i += 2
+            else:
+                new_ids.append(token_ids[i])
+                i += 1
+        return new_ids
+
+    def train(self, texts: list[str] | str, num_merges: int | None = None) -> None:
+        """Trains BPE merges on input text(s) until target vocab_size or num_merges is reached."""
+        self._reset_base_vocab()
+        if isinstance(texts, list):
+            text = "\n".join(texts)
+        else:
+            text = texts
+
+        tokens = list(text.encode("utf-8"))
+        if not tokens:
+            return
+
+        max_merges = num_merges if num_merges is not None else (self.target_vocab_size - len(self.vocab))
+
+        for _ in range(max_merges):
+            stats = self._get_stats(tokens)
+            if not stats:
+                break
+            best_pair = max(stats.items(), key=lambda x: (x[1], -x[0][0], -x[0][1]))[0]
+            if stats[best_pair] < 2:
+                break
+
+            new_id = len(self.vocab)
+            tokens = self._merge_tokens(tokens, best_pair, new_id)
+            self.merges[best_pair] = new_id
+            self.vocab[new_id] = self.vocab[best_pair[0]] + self.vocab[best_pair[1]]
+
+    def encode(self, text: str, allowed_special: bool = True) -> list[int]:
+        """Encodes string into a list of token IDs using learned BPE merges."""
+        if not text:
+            return []
+
+        if allowed_special and "<|endoftext|>" in text:
+            parts = text.split("<|endoftext|>")
+            encoded_tokens = []
+            for idx, part in enumerate(parts):
+                if part:
+                    encoded_tokens.extend(self._encode_chunk(part))
+                if idx < len(parts) - 1:
+                    encoded_tokens.append(self.special_tokens["<|endoftext|>"])
+            return encoded_tokens
+
+        return self._encode_chunk(text)
+
+    def _encode_chunk(self, text: str) -> list[int]:
+        tokens = list(text.encode("utf-8"))
+        if len(tokens) < 2:
+            return tokens
+
+        while len(tokens) >= 2:
+            stats = self._get_stats(tokens)
+            pair_to_merge = None
+            min_rank = float("inf")
+            for pair in stats:
+                if pair in self.merges:
+                    rank = self.merges[pair]
+                    if rank < min_rank:
+                        min_rank = rank
+                        pair_to_merge = pair
+
+            if pair_to_merge is None:
+                break
+
+            tokens = self._merge_tokens(tokens, pair_to_merge, self.merges[pair_to_merge])
+
+        return tokens
+
+    def decode(self, token_ids: list[int]) -> str:
+        """Decodes a list of token IDs back into a UTF-8 string."""
+        raw_bytes = bytearray()
+        for token_id in token_ids:
+            if token_id in self.vocab:
+                raw_bytes.extend(self.vocab[token_id])
+            elif token_id in self.inv_special_tokens:
+                raw_bytes.extend(self.inv_special_tokens[token_id].encode("utf-8"))
+            else:
+                raw_bytes.extend(f"<unk:{token_id}>".encode("utf-8"))
+        return raw_bytes.decode("utf-8", errors="replace")
+
+
+class GPTEmbedding(nn.Module):
+    """Embedding layer for GPT model combining token embeddings and positional embeddings."""
+    def __init__(self, vocab_size: int, embed_dim: int = 64, max_seq_len: int = 256, dropout: float = 0.1):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
+        self.max_seq_len = max_seq_len
+
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.position_embedding = nn.Embedding(max_seq_len, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """
+        input_ids: LongTensor of shape (batch_size, seq_len)
+        Returns: Tensor of shape (batch_size, seq_len, embed_dim)
+        """
+        batch_size, seq_len = input_ids.shape
+        if seq_len > self.max_seq_len:
+            raise ValueError(f"Sequence length {seq_len} exceeds max_seq_len {self.max_seq_len}")
+
+        positions = torch.arange(0, seq_len, dtype=torch.long, device=input_ids.device)
+        tok_emb = self.token_embedding(input_ids)
+        pos_emb = self.position_embedding(positions)
+        return self.dropout(tok_emb + pos_emb)
+
+
+def milestone_2(
+    category: str = "Handcrafted Leather Goods",
+    vocab_size: int = 350,
+    embed_dim: int = 64,
+    max_seq_len: int = 256,
+    data_path: str | None = None,
+) -> dict:
+    """Executes Milestone 2:
+    1. Loads the cleaned product corpus from Milestone 1 (or collects it if needed).
+    2. Trains the Byte-Pair Encoding (BPE) tokenizer on the product descriptions.
+    3. Builds the GPTEmbedding layer (Token + Positional embeddings).
+    4. Encodes product descriptions and passes token IDs through the embedding layer.
+    5. Saves tokenizer and embedding configurations to Store.
+    6. Returns the trained tokenizer, embedding layer, and generated embedding tensors.
+    """
+    store = Store(data_path)
+    corpus = store.get("corpus")
+    if not corpus:
+        m1_result = milestone_1(category=category, data_path=data_path)
+        corpus = m1_result["corpus"]
+
+    all_descriptions = [item["cleaned_description"] for item in corpus]
+
+    # Train BPE tokenizer
+    tokenizer = BPETokenizer(vocab_size=vocab_size)
+    tokenizer.train(all_descriptions)
+
+    # Initialize embedding layer
+    embedding_layer = GPTEmbedding(
+        vocab_size=tokenizer.vocab_size,
+        embed_dim=embed_dim,
+        max_seq_len=max_seq_len,
+        dropout=0.0,
+    )
+    embedding_layer.eval()
+
+    # Generate embeddings for a sample product description
+    sample_item = corpus[0]
+    sample_text = sample_item["cleaned_description"]
+    sample_tokens = tokenizer.encode(sample_text)
+    decoded_text = tokenizer.decode(sample_tokens)
+
+    # Convert to PyTorch tensor of shape (1, seq_len)
+    input_tensor = torch.tensor([sample_tokens], dtype=torch.long)
+    with torch.no_grad():
+        embeddings = embedding_layer(input_tensor)
+
+    raw_bytes_len = len(sample_text.encode("utf-8"))
+    num_tokens = len(sample_tokens)
+    compression_ratio = round(raw_bytes_len / max(num_tokens, 1), 2)
+
+    # Store metadata
+    store.put("vocab_size", tokenizer.vocab_size)
+    store.put("num_merges", len(tokenizer.merges))
+    store.put("embed_dim", embed_dim)
+
+    return {
+        "tokenizer": tokenizer,
+        "vocab_size": tokenizer.vocab_size,
+        "num_merges": len(tokenizer.merges),
+        "embedding_layer": embedding_layer,
+        "sample_item": sample_item,
+        "sample_text": sample_text,
+        "sample_tokens": sample_tokens,
+        "decoded_text": decoded_text,
+        "compression_ratio": compression_ratio,
+        "input_tensor_shape": list(input_tensor.shape),
+        "embeddings_shape": list(embeddings.shape),
+        "embeddings": embeddings,
+    }
 
 
 # --- Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.

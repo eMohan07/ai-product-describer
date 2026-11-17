@@ -16,7 +16,7 @@ Tick these off as you go, and commit after each one.
 
 - [x] **1. Collect a small corpus of product descriptions for a specific category.**  
       Hint: Focus on data collection and initial text cleaning.
-- [ ] **2. Implement the byte-pair tokenizer and generate embeddings for product text.**  
+- [x] **2. Implement the byte-pair tokenizer and generate embeddings for product text.**  
       Hint: Implement byte-pair encoding and create an embedding layer.
 - [ ] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
       Hint: Construct the causal self-attention mechanism and stack transformer blocks.
