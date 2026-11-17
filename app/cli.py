@@ -1,6 +1,6 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, milestone_2
+from app.core import milestone_1, milestone_2, milestone_3
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -20,6 +20,12 @@ def main(argv: list[str] | None = None) -> None:
     embed_parser = sub.add_parser("embed", help="train byte-pair tokenizer and generate embeddings (milestone 2)")
     embed_parser.add_argument("--vocab-size", type=int, default=350, help="target BPE vocabulary size")
     embed_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
+
+    # Milestone 3: Causal self-attention & transformer blocks
+    attn_parser = sub.add_parser("attention", help="build causal self-attention and transformer blocks (milestone 3)")
+    attn_parser.add_argument("--num-layers", type=int, default=2, help="number of transformer layers to stack")
+    attn_parser.add_argument("--num-heads", type=int, default=4, help="number of attention heads")
+    attn_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -48,6 +54,17 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\n--- Sample Token IDs (First 15) ---")
         print(result['sample_tokens'][:15])
         print(f"\nRound-trip Lossless Verification: {result['decoded_text'] == result['sample_text']}")
+    elif args.command == "attention":
+        result = milestone_3(embed_dim=args.embed_dim, num_heads=args.num_heads, num_layers=args.num_layers)
+        print("=== Milestone 3: Causal Self-Attention & Transformer Blocks ===")
+        print(f"Stacked Layers: {result['num_layers']}")
+        print(f"Attention Heads: {result['num_heads']}")
+        print(f"Embedding Dimension: {result['embed_dim']}")
+        print(f"Parameters per Transformer Block: {result['total_block_params']:,}")
+        print(f"Total Transformer Stack Parameters: {result['total_stack_params']:,}")
+        print(f"Causality Verification (Future Masking): {'PASSED' if result['causality_verified'] else 'FAILED'}")
+        print(f"Input Embeddings Tensor Shape: {result['input_embeddings_shape']}")
+        print(f"Output Hidden States Tensor Shape: {result['stack_output_shape']}")
 
 
 if __name__ == "__main__":

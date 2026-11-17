@@ -576,8 +576,197 @@ def milestone_2(
 
 # --- Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.
 # Hint: Construct the causal self-attention mechanism and stack transformer blocks.
-def milestone_3():  # TODO(milestone 3)
-    raise NotImplementedError("TODO(milestone 3)")
+
+class CausalSelfAttention(nn.Module):
+    """Multi-head Causal Self-Attention mechanism for autoregressive GPT.
+    Ensures each position only attends to itself and previous positions.
+    """
+    def __init__(self, embed_dim: int = 64, num_heads: int = 4, max_seq_len: int = 256, dropout: float = 0.1):
+        super().__init__()
+        assert embed_dim % num_heads == 0, f"embed_dim ({embed_dim}) must be divisible by num_heads ({num_heads})"
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.max_seq_len = max_seq_len
+
+        # Key, Query, Value projections in a single linear layer
+        self.c_attn = nn.Linear(embed_dim, 3 * embed_dim)
+        # Output projection
+        self.c_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+
+        # Causal mask: lower-triangular matrix of 1s
+        # Tokens at index t can only attend to tokens at indices <= t
+        self.register_buffer(
+            "bias",
+            torch.tril(torch.ones(max_seq_len, max_seq_len)).view(1, 1, max_seq_len, max_seq_len)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor of shape (batch_size, seq_len, embed_dim)
+        Returns:
+            Tensor of shape (batch_size, seq_len, embed_dim)
+        """
+        B, T, C = x.shape
+        if T > self.max_seq_len:
+            raise ValueError(f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}")
+
+        # Compute queries, keys, and values
+        qkv = self.c_attn(x)
+        q, k, v = qkv.chunk(3, dim=-1)
+
+        # Reshape to (B, num_heads, T, head_dim)
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # Scaled dot-product attention: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.head_dim))
+        # Mask out future positions (upper triangle)
+        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+        att = torch.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+
+        # Apply attention weights to values
+        y = att @ v  # (B, num_heads, T, head_dim)
+        # Re-assemble all head outputs
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+
+        return self.resid_dropout(self.c_proj(y))
+
+
+class MLP(nn.Module):
+    """Feed-forward network (MLP) within the Transformer block."""
+    def __init__(self, embed_dim: int = 64, dropout: float = 0.1):
+        super().__init__()
+        self.c_fc = nn.Linear(embed_dim, 4 * embed_dim)
+        self.act = nn.GELU()
+        self.c_proj = nn.Linear(4 * embed_dim, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.c_fc(x)
+        x = self.act(x)
+        x = self.c_proj(x)
+        return self.dropout(x)
+
+
+class TransformerBlock(nn.Module):
+    """Pre-LayerNorm Transformer Block.
+    x -> LayerNorm -> CausalSelfAttention + x -> LayerNorm -> MLP + x
+    """
+    def __init__(self, embed_dim: int = 64, num_heads: int = 4, max_seq_len: int = 256, dropout: float = 0.1):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(embed_dim)
+        self.attn = CausalSelfAttention(embed_dim, num_heads, max_seq_len, dropout)
+        self.ln_2 = nn.LayerNorm(embed_dim)
+        self.mlp = MLP(embed_dim, dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+
+class TransformerStack(nn.Module):
+    """Stacks multiple TransformerBlocks with a final LayerNorm."""
+    def __init__(self, num_layers: int = 2, embed_dim: int = 64, num_heads: int = 4, max_seq_len: int = 256, dropout: float = 0.1):
+        super().__init__()
+        self.num_layers = num_layers
+        self.embed_dim = embed_dim
+        self.layers = nn.ModuleList([
+            TransformerBlock(embed_dim, num_heads, max_seq_len, dropout)
+            for _ in range(num_layers)
+        ])
+        self.ln_f = nn.LayerNorm(embed_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for block in self.layers:
+            x = block(x)
+        return self.ln_f(x)
+
+
+def verify_causality(attn_module: CausalSelfAttention, embed_dim: int = 64) -> bool:
+    """Verifies that the attention module is strictly causal:
+    Modifying future tokens at t' > t does not affect outputs at t.
+    """
+    attn_module.eval()
+    with torch.no_grad():
+        x1 = torch.randn(1, 4, embed_dim)
+        x2 = x1.clone()
+        x2[:, 3, :] = torch.randn(1, embed_dim)
+
+        out1 = attn_module(x1)
+        out2 = attn_module(x2)
+
+        # Positions 0, 1, 2 must be mathematically identical
+        return bool(torch.allclose(out1[:, :3, :], out2[:, :3, :], atol=1e-6))
+
+
+def milestone_3(
+    embed_dim: int = 64,
+    num_heads: int = 4,
+    num_layers: int = 2,
+    max_seq_len: int = 256,
+    data_path: str | None = None,
+) -> dict:
+    """Executes Milestone 3:
+    1. Loads or executes Milestone 2 to obtain the embedding layer and sample product embeddings.
+    2. Constructs the CausalSelfAttention mechanism with scaled dot-product and causal masking.
+    3. Assembles the Pre-LayerNorm TransformerBlock with residual connections and MLP.
+    4. Stacks multiple transformer blocks into a deep TransformerStack.
+    5. Formally verifies the causality property (future tokens cannot influence past tokens).
+    6. Passes sample embeddings through the transformer stack to generate output hidden states.
+    7. Persists architectural parameters to Store and returns summary metrics.
+    """
+    m2_result = milestone_2(embed_dim=embed_dim, max_seq_len=max_seq_len, data_path=data_path)
+    sample_embeddings = m2_result["embeddings"]  # Shape: (1, seq_len, embed_dim)
+
+    # Instantiate attention, block, and stack
+    attention = CausalSelfAttention(embed_dim=embed_dim, num_heads=num_heads, max_seq_len=max_seq_len, dropout=0.0)
+    transformer_block = TransformerBlock(embed_dim=embed_dim, num_heads=num_heads, max_seq_len=max_seq_len, dropout=0.0)
+    transformer_stack = TransformerStack(num_layers=num_layers, embed_dim=embed_dim, num_heads=num_heads, max_seq_len=max_seq_len, dropout=0.0)
+
+    attention.eval()
+    transformer_block.eval()
+    transformer_stack.eval()
+
+    # Verify causality
+    causality_verified = verify_causality(attention, embed_dim=embed_dim)
+
+    # Forward pass through block and full stack
+    with torch.no_grad():
+        block_output = transformer_block(sample_embeddings)
+        stack_output = transformer_stack(sample_embeddings)
+
+    total_block_params = sum(p.numel() for p in transformer_block.parameters())
+    total_stack_params = sum(p.numel() for p in transformer_stack.parameters())
+
+    store = Store(data_path)
+    store.put("num_layers", num_layers)
+    store.put("num_heads", num_heads)
+    store.put("causality_verified", causality_verified)
+    store.put("total_stack_params", total_stack_params)
+
+    return {
+        "causal_attention": attention,
+        "transformer_block": transformer_block,
+        "transformer_stack": transformer_stack,
+        "embed_dim": embed_dim,
+        "num_heads": num_heads,
+        "num_layers": num_layers,
+        "causality_verified": causality_verified,
+        "total_block_params": total_block_params,
+        "total_stack_params": total_stack_params,
+        "input_embeddings_shape": list(sample_embeddings.shape),
+        "block_output_shape": list(block_output.shape),
+        "stack_output_shape": list(stack_output.shape),
+        "stack_output": stack_output,
+    }
 
 
 # --- Milestone 4: Train the GPT model using the collected product descriptions.

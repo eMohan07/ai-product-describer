@@ -4,7 +4,12 @@ They start skipped. Remove the `skip` line as you work on each milestone.
 """
 import pytest
 import re
-from app.core import milestone_1, milestone_2, clean_text, BPETokenizer, GPTEmbedding, RAW_CORPUS
+from app.core import (
+    milestone_1, milestone_2, milestone_3,
+    clean_text, BPETokenizer, GPTEmbedding,
+    CausalSelfAttention, TransformerBlock, TransformerStack,
+    verify_causality, RAW_CORPUS
+)
 import torch
 from app.storage import Store
 
@@ -165,9 +170,83 @@ def test_cli_embed(capsys, monkeypatch, tmp_path):
 
 
 # Milestone 3: Build the causal self-attention mechanism and assemble the transformer block.
-@pytest.mark.skip(reason="remove this line when you start milestone 3")
-def test_milestone_3():
-    raise NotImplementedError("write the test for milestone 3")
+def test_causal_self_attention_and_causality():
+    embed_dim = 64
+    num_heads = 4
+    attn = CausalSelfAttention(embed_dim=embed_dim, num_heads=num_heads, max_seq_len=64, dropout=0.0)
+
+    # 1. Output shape check
+    x = torch.randn(2, 8, embed_dim)
+    out = attn(x)
+    assert out.shape == torch.Size([2, 8, embed_dim])
+    assert not torch.isnan(out).any()
+
+    # 2. Strict causality verification
+    assert verify_causality(attn, embed_dim=embed_dim) is True
+
+    # 3. Maximum sequence length enforcement
+    too_long = torch.randn(1, 65, embed_dim)
+    with pytest.raises(ValueError):
+        attn(too_long)
+
+
+def test_transformer_block_and_stack():
+    embed_dim = 64
+    num_heads = 4
+    max_seq_len = 64
+
+    # Single Transformer Block
+    block = TransformerBlock(embed_dim=embed_dim, num_heads=num_heads, max_seq_len=max_seq_len, dropout=0.0)
+    x = torch.randn(2, 10, embed_dim)
+    out_block = block(x)
+    assert out_block.shape == torch.Size([2, 10, embed_dim])
+    # Residual check: output should not be strictly equal to input (transformed)
+    assert not torch.allclose(out_block, x)
+
+    # Stack of multiple transformer blocks (e.g. 3 layers)
+    stack = TransformerStack(num_layers=3, embed_dim=embed_dim, num_heads=num_heads, max_seq_len=max_seq_len, dropout=0.0)
+    assert len(stack.layers) == 3
+    out_stack = stack(x)
+    assert out_stack.shape == torch.Size([2, 10, embed_dim])
+
+
+def test_milestone_3(tmp_path):
+    store_file = str(tmp_path / "test_store_m3.json")
+    result = milestone_3(embed_dim=64, num_heads=4, num_layers=2, data_path=store_file)
+
+    # Validate causality
+    assert result["causality_verified"] is True
+
+    # Validate parameters and dimensions
+    assert result["num_layers"] == 2
+    assert result["num_heads"] == 4
+    assert result["embed_dim"] == 64
+    assert result["total_block_params"] > 0
+    assert result["total_stack_params"] > result["total_block_params"]
+
+    # Validate forward pass shapes
+    assert result["block_output_shape"] == result["input_embeddings_shape"]
+    assert result["stack_output_shape"] == result["input_embeddings_shape"]
+    assert isinstance(result["stack_output"], torch.Tensor)
+
+    # Validate persistence in store
+    store = Store(store_file)
+    assert store.get("num_layers") == 2
+    assert store.get("num_heads") == 4
+    assert store.get("causality_verified") is True
+    assert store.get("total_stack_params") == result["total_stack_params"]
+
+
+def test_cli_attention(capsys, monkeypatch, tmp_path):
+    from app.cli import main
+    monkeypatch.setenv("DATA_PATH", str(tmp_path / "cli_m3.json"))
+    main(["attention"])
+    captured = capsys.readouterr().out
+    assert "Milestone 3: Causal Self-Attention & Transformer Blocks" in captured
+    assert "Stacked Layers: 2" in captured
+    assert "Attention Heads: 4" in captured
+    assert "Causality Verification (Future Masking): PASSED" in captured
+    assert "Output Hidden States Tensor Shape:" in captured
 
 
 

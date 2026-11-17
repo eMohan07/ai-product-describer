@@ -18,7 +18,7 @@ Tick these off as you go, and commit after each one.
       Hint: Focus on data collection and initial text cleaning.
 - [x] **2. Implement the byte-pair tokenizer and generate embeddings for product text.**  
       Hint: Implement byte-pair encoding and create an embedding layer.
-- [ ] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
+- [x] **3. Build the causal self-attention mechanism and assemble the transformer block.**  
       Hint: Construct the causal self-attention mechanism and stack transformer blocks.
 - [ ] **4. Train the GPT model using the collected product descriptions.**  
       Hint: Set up the training loop with a loss function and optimizer.
