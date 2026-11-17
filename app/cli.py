@@ -1,6 +1,6 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, milestone_2, milestone_3, milestone_4
+from app.core import milestone_1, milestone_2, milestone_3, milestone_4, milestone_5
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -32,6 +32,13 @@ def main(argv: list[str] | None = None) -> None:
     train_parser.add_argument("--epochs", type=int, default=15, help="number of training epochs")
     train_parser.add_argument("--batch-size", type=int, default=4, help="batch size")
     train_parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
+
+    # Milestone 5: Text Generation with Sampling
+    gen_parser = sub.add_parser("generate", help="generate product descriptions from a prompt (milestone 5)")
+    gen_parser.add_argument("--prompt", default="Handcrafted", help="conditioning text prompt")
+    gen_parser.add_argument("--max-tokens", type=int, default=40, help="maximum tokens to generate")
+    gen_parser.add_argument("--temperature", type=float, default=0.8, help="sampling temperature")
+    gen_parser.add_argument("--top-k", type=int, default=40, help="top-k sampling cutoff")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -84,6 +91,21 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Loss Reduction: {((result['initial_loss'] - result['final_loss']) / result['initial_loss'] * 100):.1f}%")
         if result['checkpoint_path']:
             print(f"Saved Checkpoint: {result['checkpoint_path']}")
+    elif args.command == "generate":
+        print("=== Milestone 5: Generative Product Description ===")
+        print(f"Prompt: \"{args.prompt}\"")
+        print(f"Sampling: Temperature={args.temperature}, Top-K={args.top_k}")
+        print("Generating description...")
+        result = milestone_5(
+            prompt=args.prompt,
+            max_new_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+        )
+        print("\n--- Generated Description (Balanced Sampling) ---")
+        print(result["generated_description"])
+        print("\n--- Greedy Decoding Sample ---")
+        print(result["samples"]["greedy"])
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ Tick these off as you go, and commit after each one.
       Hint: Construct the causal self-attention mechanism and stack transformer blocks.
 - [x] **4. Train the GPT model using the collected product descriptions.**  
       Hint: Set up the training loop with a loss function and optimizer.
-- [ ] **5. Implement a text generation feature that creates new product descriptions from a prompt.**  
+- [x] **5. Implement a text generation feature that creates new product descriptions from a prompt.**  
       Hint: Implement text generation using sampling techniques.
 - [ ] **6. Develop a CLI for users to input product details and receive generated descriptions.**  
       Hint: Use a library like `argparse` to build the command-line interface.

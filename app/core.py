@@ -851,6 +851,40 @@ class ProductGPT(nn.Module):
 
         return logits, loss
 
+    @torch.no_grad()
+    def generate(
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int = 50,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        end_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """Autoregressively generates new tokens given conditioning sequence idx (shape (B, T))."""
+        self.eval()
+        for _ in range(max_new_tokens):
+            idx_cond = idx if idx.size(1) <= self.max_seq_len else idx[:, -self.max_seq_len:]
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]
+
+            if temperature == 0.0 or (top_k is not None and top_k == 1):
+                idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+            else:
+                if temperature > 0.0:
+                    logits = logits / temperature
+                if top_k is not None and top_k > 0:
+                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < v[:, [-1]]] = -float("Inf")
+                probs = torch.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+
+            idx = torch.cat((idx, idx_next), dim=1)
+
+            if end_token_id is not None and (idx_next == end_token_id).all():
+                break
+
+        return idx
+
 
 def prepare_training_data(
     corpus: list[dict],
@@ -1024,8 +1058,132 @@ def milestone_4(
 
 # --- Milestone 5: Implement a text generation feature that creates new product descriptions from a prompt.
 # Hint: Implement text generation using sampling techniques.
-def milestone_5():  # TODO(milestone 5)
-    raise NotImplementedError("TODO(milestone 5)")
+
+def generate_product_description(
+    model: ProductGPT,
+    tokenizer: BPETokenizer,
+    prompt: str = "Handcrafted",
+    max_new_tokens: int = 50,
+    temperature: float = 0.8,
+    top_k: int = 40,
+) -> str:
+    """Generates a coherent product description starting from a prompt string
+    using temperature and top-k multinomial sampling.
+    """
+    prompt_tokens = tokenizer.encode(prompt, allowed_special=False)
+    if not prompt_tokens:
+        prompt_tokens = tokenizer.encode("The", allowed_special=False)
+
+    idx = torch.tensor([prompt_tokens], dtype=torch.long)
+    end_token_id = tokenizer.special_tokens.get("<|endoftext|>", 256)
+
+    generated_idx = model.generate(
+        idx=idx,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        end_token_id=end_token_id,
+    )
+
+    token_list = generated_idx[0].tolist()
+    text = tokenizer.decode(token_list)
+    # Remove special token and extraneous spaces
+    text = text.replace("<|endoftext|>", "").strip()
+    return text
+
+
+def milestone_5(
+    prompt: str = "Handcrafted",
+    max_new_tokens: int = 40,
+    temperature: float = 0.8,
+    top_k: int = 40,
+    data_path: str | None = None,
+) -> dict:
+    """Executes Milestone 5:
+    1. Loads or trains the ProductGPT model and tokenizer from Milestone 4.
+    2. Implements text generation with configurable sampling techniques (temperature, top-k, greedy).
+    3. Demonstrates comparative sampling modes (greedy, balanced, creative).
+    4. Persists generation results in Store.
+    5. Returns generated text and sampling comparisons.
+    """
+    store = Store(data_path)
+    weights_path = Path(data_path).parent / "product_gpt.pt" if data_path else Path("data/product_gpt.pt")
+
+    tokenizer = BPETokenizer(vocab_size=350)
+    corpus = store.get("corpus")
+    if not corpus:
+        m1 = milestone_1(data_path=data_path)
+        corpus = m1["corpus"]
+
+    all_texts = [item["cleaned_description"] for item in corpus]
+    tokenizer.train(all_texts)
+
+    model = ProductGPT(
+        vocab_size=tokenizer.vocab_size,
+        embed_dim=64,
+        num_heads=4,
+        num_layers=2,
+        max_seq_len=256,
+        dropout=0.0,
+    )
+
+    if weights_path.exists():
+        checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        m4 = milestone_4(epochs=5, data_path=data_path, save_weights=True)
+        model = m4["model"]
+
+    model.eval()
+
+    # 1. Primary generation with balanced sampling
+    primary_description = generate_product_description(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+    )
+
+    # 2. Comparative sampling techniques:
+    # Greedy (deterministic, temperature=0.0)
+    greedy_description = generate_product_description(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=0.0,
+        top_k=1,
+    )
+
+    # Creative (higher temperature, larger top_k)
+    creative_description = generate_product_description(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=1.0,
+        top_k=50,
+    )
+
+    store.put("last_prompt", prompt)
+    store.put("last_generated_description", primary_description)
+    store.put("last_sampling_technique", f"temperature={temperature}, top_k={top_k}")
+
+    return {
+        "prompt": prompt,
+        "generated_description": primary_description,
+        "temperature": temperature,
+        "top_k": top_k,
+        "samples": {
+            "greedy": greedy_description,
+            "balanced": primary_description,
+            "creative": creative_description,
+        },
+        "model": model,
+        "tokenizer": tokenizer,
+    }
 
 
 # --- Milestone 6: Develop a CLI for users to input product details and receive generated descriptions.

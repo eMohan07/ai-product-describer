@@ -5,10 +5,11 @@ They start skipped. Remove the `skip` line as you work on each milestone.
 import pytest
 import re
 from app.core import (
-    milestone_1, milestone_2, milestone_3, milestone_4,
+    milestone_1, milestone_2, milestone_3, milestone_4, milestone_5,
     clean_text, BPETokenizer, GPTEmbedding,
     CausalSelfAttention, TransformerBlock, TransformerStack,
     ProductGPT, prepare_training_data, train_gpt_model,
+    generate_product_description,
     verify_causality, RAW_CORPUS
 )
 import os
@@ -338,9 +339,87 @@ def test_cli_train(capsys, monkeypatch, tmp_path):
 
 
 # Milestone 5: Implement a text generation feature that creates new product descriptions from a prompt.
-@pytest.mark.skip(reason="remove this line when you start milestone 5")
-def test_milestone_5():
-    raise NotImplementedError("write the test for milestone 5")
+def test_product_gpt_generate_sampling():
+    vocab_size = 300
+    model = ProductGPT(vocab_size=vocab_size, embed_dim=64, num_heads=4, num_layers=2)
+
+    prompt_idx = torch.tensor([[10, 25, 50]], dtype=torch.long)  # length 3
+    max_new_tokens = 15
+
+    # 1. Greedy generation (temperature=0.0) must be deterministic
+    gen_greedy_1 = model.generate(prompt_idx.clone(), max_new_tokens=max_new_tokens, temperature=0.0, top_k=1)
+    gen_greedy_2 = model.generate(prompt_idx.clone(), max_new_tokens=max_new_tokens, temperature=0.0, top_k=1)
+    assert gen_greedy_1.shape == torch.Size([1, 3 + max_new_tokens])
+    assert torch.equal(gen_greedy_1, gen_greedy_2)
+
+    # 2. Temperature sampling with Top-K
+    gen_sampled = model.generate(prompt_idx.clone(), max_new_tokens=max_new_tokens, temperature=0.8, top_k=20)
+    assert gen_sampled.shape == torch.Size([1, 3 + max_new_tokens])
+    assert not torch.isnan(gen_sampled.float()).any()
+
+
+def test_generate_product_description():
+    tokenizer = BPETokenizer(vocab_size=300)
+    sample_corpus = [
+        "Handcrafted full-grain leather briefcase with brass hardware.",
+        "Minimalist leather bifold wallet."
+    ]
+    tokenizer.train(sample_corpus, num_merges=15)
+    model = ProductGPT(vocab_size=tokenizer.vocab_size, embed_dim=64, num_heads=4, num_layers=2)
+
+    prompt = "Handcrafted"
+    result_text = generate_product_description(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=20,
+        temperature=0.8,
+        top_k=20,
+    )
+    assert isinstance(result_text, str)
+    assert len(result_text) >= len(prompt)
+    assert prompt in result_text
+
+
+def test_milestone_5(tmp_path):
+    store_file = str(tmp_path / "test_store_m5.json")
+    prompt = "The Heritage"
+    result = milestone_5(
+        prompt=prompt,
+        max_new_tokens=25,
+        temperature=0.8,
+        top_k=40,
+        data_path=store_file,
+    )
+
+    # 1. Output verification
+    assert result["prompt"] == prompt
+    assert len(result["generated_description"]) > len(prompt)
+    assert prompt in result["generated_description"]
+
+    # 2. Sampling modes verification
+    samples = result["samples"]
+    assert "greedy" in samples
+    assert "balanced" in samples
+    assert "creative" in samples
+    assert len(samples["greedy"]) > 0
+    assert len(samples["creative"]) > 0
+
+    # 3. Store persistence verification
+    store = Store(store_file)
+    assert store.get("last_prompt") == prompt
+    assert store.get("last_generated_description") == result["generated_description"]
+
+
+def test_cli_generate(capsys, monkeypatch, tmp_path):
+    from app.cli import main
+    monkeypatch.setenv("DATA_PATH", str(tmp_path / "cli_m5.json"))
+    main(["generate", "--prompt", "Handcrafted", "--max-tokens", "20"])
+    captured = capsys.readouterr().out
+    assert "Milestone 5: Generative Product Description" in captured
+    assert "Prompt:" in captured
+    assert "Generated Description" in captured
+
 
 
 # Milestone 6: Develop a CLI for users to input product details and receive generated descriptions.
