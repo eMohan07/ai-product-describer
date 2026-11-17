@@ -1,6 +1,6 @@
 """Command-line entry point: `python -m app.cli --help`."""
 import argparse
-from app.core import milestone_1, milestone_2, milestone_3
+from app.core import milestone_1, milestone_2, milestone_3, milestone_4
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -26,6 +26,12 @@ def main(argv: list[str] | None = None) -> None:
     attn_parser.add_argument("--num-layers", type=int, default=2, help="number of transformer layers to stack")
     attn_parser.add_argument("--num-heads", type=int, default=4, help="number of attention heads")
     attn_parser.add_argument("--embed-dim", type=int, default=64, help="embedding dimension")
+
+    # Milestone 4: Train GPT model
+    train_parser = sub.add_parser("train", help="train GPT model on product descriptions (milestone 4)")
+    train_parser.add_argument("--epochs", type=int, default=15, help="number of training epochs")
+    train_parser.add_argument("--batch-size", type=int, default=4, help="batch size")
+    train_parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
 
     args = parser.parse_args(argv)
     if args.command == "hello":
@@ -65,6 +71,19 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Causality Verification (Future Masking): {'PASSED' if result['causality_verified'] else 'FAILED'}")
         print(f"Input Embeddings Tensor Shape: {result['input_embeddings_shape']}")
         print(f"Output Hidden States Tensor Shape: {result['stack_output_shape']}")
+    elif args.command == "train":
+        print(f"=== Milestone 4: Training GPT Model ===")
+        print(f"Epochs: {args.epochs} | Batch Size: {args.batch_size} | Learning Rate: {args.lr}")
+        print("Training in progress...")
+        result = milestone_4(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
+        print("Training completed successfully!")
+        print(f"Total Parameters: {result['total_params']:,}")
+        print(f"Training Sequences: {result['num_sequences']}")
+        print(f"Initial Loss: {result['initial_loss']:.4f}")
+        print(f"Final Loss:   {result['final_loss']:.4f}")
+        print(f"Loss Reduction: {((result['initial_loss'] - result['final_loss']) / result['initial_loss'] * 100):.1f}%")
+        if result['checkpoint_path']:
+            print(f"Saved Checkpoint: {result['checkpoint_path']}")
 
 
 if __name__ == "__main__":

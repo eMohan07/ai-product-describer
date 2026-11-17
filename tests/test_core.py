@@ -5,11 +5,13 @@ They start skipped. Remove the `skip` line as you work on each milestone.
 import pytest
 import re
 from app.core import (
-    milestone_1, milestone_2, milestone_3,
+    milestone_1, milestone_2, milestone_3, milestone_4,
     clean_text, BPETokenizer, GPTEmbedding,
     CausalSelfAttention, TransformerBlock, TransformerStack,
+    ProductGPT, prepare_training_data, train_gpt_model,
     verify_causality, RAW_CORPUS
 )
+import os
 import torch
 from app.storage import Store
 
@@ -251,9 +253,88 @@ def test_cli_attention(capsys, monkeypatch, tmp_path):
 
 
 # Milestone 4: Train the GPT model using the collected product descriptions.
-@pytest.mark.skip(reason="remove this line when you start milestone 4")
-def test_milestone_4():
-    raise NotImplementedError("write the test for milestone 4")
+def test_product_gpt_forward_and_loss():
+    vocab_size = 300
+    embed_dim = 64
+    num_heads = 4
+    num_layers = 2
+    model = ProductGPT(vocab_size=vocab_size, embed_dim=embed_dim, num_heads=num_heads, num_layers=num_layers)
+
+    batch_size = 2
+    seq_len = 16
+    x = torch.randint(0, vocab_size, (batch_size, seq_len))
+    y = torch.randint(0, vocab_size, (batch_size, seq_len))
+
+    # Without targets
+    logits, loss = model(x)
+    assert logits.shape == torch.Size([batch_size, seq_len, vocab_size])
+    assert loss is None
+
+    # With targets
+    logits, loss = model(x, y)
+    assert logits.shape == torch.Size([batch_size, seq_len, vocab_size])
+    assert loss is not None
+    assert loss.item() > 0
+    assert not torch.isnan(loss)
+
+
+def test_prepare_training_data():
+    tokenizer = BPETokenizer(vocab_size=300)
+    sample_corpus = [
+        {"cleaned_description": "Handcrafted full-grain leather briefcase with brass hardware."},
+        {"cleaned_description": "Minimalist bifold wallet crafted from bridle leather."}
+    ]
+    tokenizer.train([item["cleaned_description"] for item in sample_corpus], num_merges=10)
+
+    seq_len = 12
+    inputs, targets = prepare_training_data(sample_corpus, tokenizer, seq_len=seq_len)
+    assert inputs.size(0) > 0
+    assert inputs.shape == targets.shape
+    assert inputs.size(1) == seq_len
+    # Autoregressive target check: target at t is input at t + 1
+    assert targets[0, 0].item() == inputs[0, 1].item()
+
+
+def test_milestone_4(tmp_path):
+    store_file = str(tmp_path / "test_store_m4.json")
+    result = milestone_4(
+        epochs=8,
+        batch_size=4,
+        seq_len=32,
+        data_path=store_file,
+        save_weights=True,
+    )
+
+    # 1. Training metrics verification
+    assert result["epochs"] == 8
+    assert result["initial_loss"] > 0
+    assert result["final_loss"] > 0
+    assert result["loss_decreased"] is True
+    assert result["final_loss"] < result["initial_loss"]
+    assert len(result["loss_history"]) == 8
+
+    # 2. Checkpoint verification
+    assert result["checkpoint_path"] is not None
+    assert os.path.exists(result["checkpoint_path"])
+
+    # 3. Store persistence
+    store = Store(store_file)
+    assert store.get("trained_epochs") == 8
+    assert store.get("initial_loss") is not None
+    assert store.get("final_loss") is not None
+
+
+def test_cli_train(capsys, monkeypatch, tmp_path):
+    from app.cli import main
+    monkeypatch.setenv("DATA_PATH", str(tmp_path / "cli_m4.json"))
+    main(["train", "--epochs", "5"])
+    captured = capsys.readouterr().out
+    assert "Milestone 4: Training GPT Model" in captured
+    assert "Training completed successfully!" in captured
+    assert "Initial Loss:" in captured
+    assert "Final Loss:" in captured
+    assert "Loss Reduction:" in captured
+
 
 
 # Milestone 5: Implement a text generation feature that creates new product descriptions from a prompt.

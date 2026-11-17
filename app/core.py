@@ -1,4 +1,5 @@
 """Your code. One stub per milestone; build them in order and keep each one small."""
+from pathlib import Path
 import html
 import math
 import re
@@ -771,8 +772,254 @@ def milestone_3(
 
 # --- Milestone 4: Train the GPT model using the collected product descriptions.
 # Hint: Set up the training loop with a loss function and optimizer.
-def milestone_4():  # TODO(milestone 4)
-    raise NotImplementedError("TODO(milestone 4)")
+
+class ProductGPT(nn.Module):
+    """Autoregressive Generative Pre-trained Transformer (GPT) model for Product Descriptions."""
+    def __init__(
+        self,
+        vocab_size: int = 350,
+        embed_dim: int = 64,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        max_seq_len: int = 256,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
+        self.max_seq_len = max_seq_len
+
+        # Token + Positional Embeddings
+        self.embedding = GPTEmbedding(
+            vocab_size=vocab_size,
+            embed_dim=embed_dim,
+            max_seq_len=max_seq_len,
+            dropout=dropout,
+        )
+
+        # Deep Causal Transformer Stack
+        self.transformer = TransformerStack(
+            num_layers=num_layers,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            max_seq_len=max_seq_len,
+            dropout=dropout,
+        )
+
+        # Output LM Projection Head
+        self.lm_head = nn.Linear(embed_dim, vocab_size, bias=False)
+
+        # Weight tying
+        self.lm_head.weight = self.embedding.token_embedding.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.ones_(module.weight)
+
+    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
+        """
+        Args:
+            input_ids: LongTensor of shape (batch_size, seq_len)
+            targets: Optional LongTensor of shape (batch_size, seq_len)
+        Returns:
+            logits: Tensor of shape (batch_size, seq_len, vocab_size)
+            loss: Scalar Cross-Entropy loss if targets provided, else None
+        """
+        B, T = input_ids.shape
+        if T > self.max_seq_len:
+            raise ValueError(f"Sequence length {T} exceeds max_seq_len {self.max_seq_len}")
+
+        x = self.embedding(input_ids)
+        x = self.transformer(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = torch.nn.functional.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+            )
+
+        return logits, loss
+
+
+def prepare_training_data(
+    corpus: list[dict],
+    tokenizer: BPETokenizer,
+    seq_len: int = 32,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Encodes product descriptions with <|endoftext|> delimiters, then creates
+    autoregressive input (X) and shifted next-token target (Y) sequences.
+    """
+    token_stream: list[int] = []
+    end_token_id = tokenizer.special_tokens.get("<|endoftext|>", 256)
+
+    for item in corpus:
+        tokens = tokenizer.encode(item["cleaned_description"])
+        token_stream.extend(tokens)
+        token_stream.append(end_token_id)
+
+    inputs = []
+    targets = []
+    step = max(1, seq_len // 2)
+    for i in range(0, len(token_stream) - seq_len, step):
+        x = token_stream[i : i + seq_len]
+        y = token_stream[i + 1 : i + seq_len + 1]
+        if len(x) == seq_len and len(y) == seq_len:
+            inputs.append(x)
+            targets.append(y)
+
+    x_tensor = torch.tensor(inputs, dtype=torch.long)
+    y_tensor = torch.tensor(targets, dtype=torch.long)
+    return x_tensor, y_tensor
+
+
+def train_gpt_model(
+    model: ProductGPT,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    epochs: int = 15,
+    batch_size: int = 4,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-2,
+) -> list[float]:
+    """Runs the training loop with Cross-Entropy Loss and AdamW optimizer."""
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_history: list[float] = []
+
+    num_samples = inputs.size(0)
+
+    model.train()
+    for _ in range(epochs):
+        perm = torch.randperm(num_samples)
+        epoch_loss = 0.0
+        num_batches = 0
+
+        for start_idx in range(0, num_samples, batch_size):
+            batch_indices = perm[start_idx : start_idx + batch_size]
+            batch_x = inputs[batch_indices]
+            batch_y = targets[batch_indices]
+
+            optimizer.zero_grad()
+            logits, loss = model(batch_x, batch_y)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+
+        avg_loss = epoch_loss / max(num_batches, 1)
+        loss_history.append(avg_loss)
+
+    model.eval()
+    return loss_history
+
+
+def milestone_4(
+    epochs: int = 15,
+    batch_size: int = 4,
+    seq_len: int = 32,
+    embed_dim: int = 64,
+    num_heads: int = 4,
+    num_layers: int = 2,
+    lr: float = 1e-3,
+    data_path: str | None = None,
+    save_weights: bool = True,
+) -> dict:
+    """Executes Milestone 4:
+    1. Loads cleaned product descriptions from Milestone 1.
+    2. Builds/trains BPE tokenizer on the descriptions.
+    3. Initializes the full ProductGPT model architecture.
+    4. Slices corpus into autoregressive (X, Y) sequences.
+    5. Sets up Cross-Entropy loss and AdamW optimizer.
+    6. Trains the model and verifies loss decrease (convergence).
+    7. Optionally saves the checkpoint and records metrics in Store.
+    8. Returns the trained model, loss progression, and parameters.
+    """
+    store = Store(data_path)
+    corpus = store.get("corpus")
+    if not corpus:
+        m1 = milestone_1(data_path=data_path)
+        corpus = m1["corpus"]
+
+    tokenizer = BPETokenizer(vocab_size=350)
+    all_texts = [item["cleaned_description"] for item in corpus]
+    tokenizer.train(all_texts)
+
+    # Prepare training sequences
+    inputs, targets = prepare_training_data(corpus, tokenizer, seq_len=seq_len)
+
+    # Initialize model
+    model = ProductGPT(
+        vocab_size=tokenizer.vocab_size,
+        embed_dim=embed_dim,
+        num_heads=num_heads,
+        num_layers=num_layers,
+        max_seq_len=256,
+        dropout=0.1,
+    )
+
+    # Initial loss measurement
+    model.eval()
+    with torch.no_grad():
+        _, init_loss = model(inputs[:batch_size], targets[:batch_size])
+    initial_loss = float(init_loss.item())
+
+    # Training loop
+    loss_history = train_gpt_model(
+        model=model,
+        inputs=inputs,
+        targets=targets,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+    )
+    final_loss = loss_history[-1]
+
+    # Save checkpoint
+    checkpoint_path = None
+    if save_weights:
+        weights_dir = Path(data_path).parent if data_path else Path("data")
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = str(weights_dir / "product_gpt.pt")
+        torch.save({
+            "model_state_dict": model.state_dict(),
+            "vocab_size": tokenizer.vocab_size,
+            "embed_dim": embed_dim,
+            "num_heads": num_heads,
+            "num_layers": num_layers,
+            "final_loss": final_loss,
+        }, checkpoint_path)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    store.put("initial_loss", round(initial_loss, 4))
+    store.put("final_loss", round(final_loss, 4))
+    store.put("trained_epochs", epochs)
+    store.put("total_model_params", total_params)
+
+    return {
+        "model": model,
+        "tokenizer": tokenizer,
+        "initial_loss": initial_loss,
+        "final_loss": final_loss,
+        "loss_history": loss_history,
+        "loss_decreased": final_loss < initial_loss,
+        "epochs": epochs,
+        "num_sequences": inputs.size(0),
+        "total_tokens": inputs.numel(),
+        "total_params": total_params,
+        "checkpoint_path": checkpoint_path,
+    }
 
 
 # --- Milestone 5: Implement a text generation feature that creates new product descriptions from a prompt.
