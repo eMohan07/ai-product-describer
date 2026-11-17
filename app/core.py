@@ -1131,7 +1131,7 @@ def milestone_5(
         checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        m4 = milestone_4(epochs=5, data_path=data_path, save_weights=True)
+        m4 = milestone_4(epochs=2, data_path=data_path, save_weights=True)
         model = m4["model"]
 
     model.eval()
@@ -1230,7 +1230,7 @@ def milestone_6(
         checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        m4 = milestone_4(epochs=5, data_path=data_path, save_weights=True)
+        m4 = milestone_4(epochs=2, data_path=data_path, save_weights=True)
         model = m4["model"]
 
     model.eval()

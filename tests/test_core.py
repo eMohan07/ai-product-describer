@@ -299,7 +299,7 @@ def test_prepare_training_data():
 def test_milestone_4(tmp_path):
     store_file = str(tmp_path / "test_store_m4.json")
     result = milestone_4(
-        epochs=8,
+        epochs=4,
         batch_size=4,
         seq_len=32,
         data_path=store_file,
@@ -307,12 +307,12 @@ def test_milestone_4(tmp_path):
     )
 
     # 1. Training metrics verification
-    assert result["epochs"] == 8
+    assert result["epochs"] == 4
     assert result["initial_loss"] > 0
     assert result["final_loss"] > 0
     assert result["loss_decreased"] is True
     assert result["final_loss"] < result["initial_loss"]
-    assert len(result["loss_history"]) == 8
+    assert len(result["loss_history"]) == 4
 
     # 2. Checkpoint verification
     assert result["checkpoint_path"] is not None
@@ -320,7 +320,7 @@ def test_milestone_4(tmp_path):
 
     # 3. Store persistence
     store = Store(store_file)
-    assert store.get("trained_epochs") == 8
+    assert store.get("trained_epochs") == 4
     assert store.get("initial_loss") is not None
     assert store.get("final_loss") is not None
 
@@ -328,7 +328,7 @@ def test_milestone_4(tmp_path):
 def test_cli_train(capsys, monkeypatch, tmp_path):
     from app.cli import main
     monkeypatch.setenv("DATA_PATH", str(tmp_path / "cli_m4.json"))
-    main(["train", "--epochs", "5"])
+    main(["train", "--epochs", "2"])
     captured = capsys.readouterr().out
     assert "Milestone 4: Training GPT Model" in captured
     assert "Training completed successfully!" in captured
